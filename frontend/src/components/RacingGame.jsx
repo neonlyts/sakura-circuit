@@ -1,18 +1,15 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 
 // =====================================================================
-// CONSTANTS
+// GAME CONSTANTS (unchanged)
 // =====================================================================
 const CW = 900;
 const CH = 560;
 const TOTAL_LAPS = 3;
-const TW = 72;        // track width
-const TH = TW / 2;   // track half-width
-const CAR_W = 14;     // car body width (perpendicular to travel)
-const CAR_H = 26;     // car body height (along travel axis)
-const SEGS = 16;      // catmull-rom segments per control-point section
+const TW = 72;
+const TH = TW / 2;
+const SEGS = 16;
 
-// Car definitions
 const CARS = {
   red:    { color: "#EF4444", name: "Sakura Red",   stat: "Speed",    rating: 9 },
   blue:   { color: "#3B82F6", name: "Tokyo Blue",   stat: "Control",  rating: 8 },
@@ -20,8 +17,23 @@ const CARS = {
 };
 
 // =====================================================================
-// TRACK – Classic circuit: main straight → right sweep → back straight
-//         → top straight → left hairpin → return straight
+// 3D PERSPECTIVE CONSTANTS  (medium camera distance)
+// =====================================================================
+const HORIZON_Y = Math.floor(CH * 0.40); // 224 – horizon line
+const PROJ_H    = CH - HORIZON_Y;         // 336 – road visible height
+const CAM_BACK  = 42;                     // world-px behind player (medium)
+const FOCAL_X   = 380;                    // horizontal perspective
+const PROJ_YC   = PROJ_H * CAM_BACK;     // 14112 – vertical projection constant
+// Screen-space formulas:
+//   screenY = HORIZON_Y + PROJ_YC / fwd
+//   screenX = CW/2     + lat * FOCAL_X / fwd
+//   roadHalfW          = TH  * FOCAL_X / fwd
+
+const DRAW_SEGS = 92;   // smooth points ahead to render
+const TREE_SC   = 0.22; // tree visual scale multiplier
+
+// =====================================================================
+// TRACK – Classic circuit
 // =====================================================================
 const CTRL_PTS = [
   { x: 185, y: 490 }, // 0  START/FINISH
@@ -45,22 +57,25 @@ const CTRL_PTS = [
   { x: 148, y: 452 }, // 18 approaching start
 ];
 
-// Decorative cherry-blossom tree positions (infield + outside)
-const TREES = [
-  { x: 440, y: 180, s: 1.2 }, { x: 545, y: 208, s: 0.9 },
-  { x: 340, y: 242, s: 1.0 }, { x: 640, y: 228, s: 1.1 },
-  { x: 484, y: 294, s: 0.8 }, { x: 392, y: 358, s: 1.0 },
-  { x: 590, y: 362, s: 0.9 }, { x: 472, y: 418, s: 0.8 },
-  { x: 665, y: 412, s: 0.7 }, { x: 270, y: 310, s: 0.9 },
-  // Outside the track
-  { x: 46,  y: 192, s: 1.0 }, { x: 48,  y: 312, s: 0.9 },
-  { x: 56,  y: 412, s: 1.1 }, { x: 860, y: 212, s: 1.0 },
-  { x: 868, y: 342, s: 0.9 }, { x: 848, y: 448, s: 0.8 },
-  { x: 156, y: 138, s: 0.8 }, { x: 818, y: 148, s: 0.8 },
+// Trees defined track-relative: seg=smooth-point-index, lat=lateral offset (+ = right of travel)
+const TREE_DEFS = [
+  { seg: 6,   lat: -88, s: 1.2 }, { seg: 18,  lat: -85, s: 1.0 },
+  { seg: 30,  lat: -82, s: 0.9 }, { seg: 38,  lat:  88, s: 1.0 },
+  { seg: 46,  lat: -82, s: 1.1 }, { seg: 55,  lat: -80, s: 1.1 },
+  { seg: 64,  lat:  88, s: 1.0 }, { seg: 74,  lat: -85, s: 0.9 },
+  { seg: 84,  lat:  82, s: 1.2 }, { seg: 98,  lat:  82, s: 1.0 },
+  { seg: 108, lat: -80, s: 0.9 }, { seg: 118, lat:  86, s: 1.1 },
+  { seg: 136, lat: -82, s: 1.0 }, { seg: 152, lat:  88, s: 1.1 },
+  { seg: 166, lat: -84, s: 0.9 }, { seg: 180, lat:  82, s: 1.0 },
+  { seg: 196, lat: -82, s: 1.1 }, { seg: 208, lat:  92, s: 1.2 },
+  { seg: 218, lat: -80, s: 1.0 }, { seg: 234, lat:  82, s: 0.9 },
+  { seg: 248, lat: -82, s: 1.0 }, { seg: 264, lat:  86, s: 1.1 },
+  { seg: 278, lat: -80, s: 0.9 }, { seg: 292, lat:  82, s: 1.0 },
+  { seg: 2,   lat: -84, s: 1.0 },
 ];
 
 // =====================================================================
-// MATH UTILITIES
+// MATH UTILITIES (unchanged)
 // =====================================================================
 function catmullRomPt(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t;
@@ -86,11 +101,26 @@ function normAngle(a) {
   return a;
 }
 
-// Precompute once (outside component)
+// =====================================================================
+// PRECOMPUTED DATA (module-level, computed once)
+// =====================================================================
 const SMOOTH = buildSmoothTrack(CTRL_PTS);
 
+// Compute tree world positions from track-relative definitions
+const TREES_3D = (() => {
+  const N = SMOOTH.length;
+  return TREE_DEFS.map(t => {
+    const idx  = ((t.seg % N) + N) % N;
+    const next = (idx + 1) % N;
+    const p = SMOOTH[idx], pn = SMOOTH[next];
+    const dir = Math.atan2(pn.y - p.y, pn.x - p.x);
+    const px = -Math.sin(dir), py = Math.cos(dir); // perpendicular (right of travel)
+    return { x: p.x + px * t.lat, y: p.y + py * t.lat, s: t.s };
+  });
+})();
+
 // =====================================================================
-// CAR FACTORY
+// CAR FACTORY (unchanged)
 // =====================================================================
 function makeCar(x, y, angle, colorKey, isPlayer, hint) {
   return {
@@ -103,15 +133,13 @@ function makeCar(x, y, angle, colorKey, isPlayer, hint) {
     color:     CARS[colorKey]?.color || colorKey,
     colorKey,
     isPlayer,
-    // Input flags
     iAccel: false, iBrake: false, iLeft: false, iRight: false,
-    // Race state
     lap: 1, hint, halfway: false, finished: false, finPos: 0, onTrack: true,
   };
 }
 
 // =====================================================================
-// PHYSICS
+// PHYSICS (unchanged)
 // =====================================================================
 function physicsStep(car, dt) {
   if (car.finished) { car.speed *= 0.92; return; }
@@ -131,7 +159,7 @@ function physicsStep(car, dt) {
 }
 
 // =====================================================================
-// AI STEERING
+// AI STEERING (unchanged)
 // =====================================================================
 function aiSteer(car, smooth) {
   if (car.finished) return;
@@ -143,12 +171,11 @@ function aiSteer(car, smooth) {
   car.iRight = diff > 0.08;
   car.iAccel = true;
   car.iBrake = Math.abs(diff) > 0.62;
-  // Medium difficulty: small occasional error
   if (Math.random() < 0.013) { car.iLeft = Math.random() < 0.5; car.iRight = !car.iLeft; }
 }
 
 // =====================================================================
-// PROGRESS & LAP DETECTION
+// PROGRESS & LAP DETECTION (unchanged)
 // =====================================================================
 function trackProgress(car, smooth) {
   const n = smooth.length;
@@ -159,18 +186,16 @@ function trackProgress(car, smooth) {
     const dsq = (car.x - p.x) ** 2 + (car.y - p.y) ** 2;
     if (dsq < best) { best = dsq; idx = i; }
   }
-  car.hint     = idx;
-  car.onTrack  = best < (TH + 14) ** 2;
-
+  car.hint    = idx;
+  car.onTrack = best < (TH + 14) ** 2;
   const halfIdx   = Math.floor(n * 0.42);
   const finishIdx = Math.floor(n * 0.07);
-
   if (idx > halfIdx  && !car.halfway) car.halfway = true;
   if (car.halfway && idx < finishIdx) { car.halfway = false; car.lap++; }
 }
 
 // =====================================================================
-// BOUNDARY CORRECTION
+// BOUNDARY CORRECTION (unchanged)
 // =====================================================================
 function clampToTrack(car, smooth) {
   const p    = smooth[car.hint];
@@ -186,7 +211,7 @@ function clampToTrack(car, smooth) {
 }
 
 // =====================================================================
-// POSITION HELPER
+// POSITION HELPER (unchanged)
 // =====================================================================
 function getRacePos(player, ai1, ai2) {
   const sorted = [player, ai1, ai2].slice().sort((a, b) =>
@@ -196,185 +221,457 @@ function getRacePos(player, ai1, ai2) {
 }
 
 // =====================================================================
-// RENDERING
+// 3D PROJECTION HELPER
+// Projects a 2D world point into camera space, then to screen.
+// Camera faces along (cos_a, sin_a). Returns null if behind camera.
 // =====================================================================
-function drawBackground(ctx) {
-  // Sky
-  const sg = ctx.createLinearGradient(0, 0, 0, 210);
-  sg.addColorStop(0, "#52ABCC"); sg.addColorStop(1, "#A8D8EF");
+function proj(wx, wy, camX, camY, cos_a, sin_a) {
+  const dx  = wx - camX, dy = wy - camY;
+  const fwd = dx * cos_a + dy * sin_a;   // depth along camera axis
+  const lat = -dx * sin_a + dy * cos_a;  // lateral offset (+ = right)
+  if (fwd <= 0.5) return null;
+  return {
+    fwd,
+    screenX: CW / 2 + lat * FOCAL_X / fwd,
+    screenY: HORIZON_Y + PROJ_YC / fwd,
+    hw:      TH * FOCAL_X / fwd,          // road half-width in pixels
+    scale:   FOCAL_X / fwd,               // general perspective scale
+  };
+}
+
+// =====================================================================
+// 3D RENDERING – SKY + MOUNTAINS (parallax by camera angle)
+// =====================================================================
+function drawSky3D(ctx, camAngle) {
+  // Sky gradient
+  const sg = ctx.createLinearGradient(0, 0, 0, HORIZON_Y + 8);
+  sg.addColorStop(0,   "#2E88B4");
+  sg.addColorStop(0.6, "#6EC8E8");
+  sg.addColorStop(1,   "#AAE0F5");
   ctx.fillStyle = sg;
-  ctx.fillRect(0, 0, CW, 210);
+  ctx.fillRect(0, 0, CW, HORIZON_Y + 5);
 
-  // Clouds
-  ctx.fillStyle = "rgba(255,255,255,0.72)";
-  [[80,52,48],[230,38,38],[500,58,52],[685,44,40],[830,54,36]].forEach(([cx,cy,r]) => {
-    ctx.beginPath(); ctx.arc(cx,    cy,    r,      0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx+33, cy+8,  r*0.68, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx-28, cy+10, r*0.62, 0, Math.PI*2); ctx.fill();
+  // Clouds (subtle parallax)
+  const cOff = ((-camAngle / (Math.PI * 2)) * CW * 0.5 + CW * 4) % CW;
+  ctx.fillStyle = "rgba(255,255,255,0.76)";
+  [[70,42,44],[250,33,36],[490,48,50],[685,36,38],[840,40,32]].forEach(([cx, cy, r]) => {
+    const ox = ((cx + cOff) % CW + CW) % CW;
+    ctx.beginPath(); ctx.arc(ox,    cy,    r,       0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(ox+32, cy+7,  r*0.65,  0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(ox-27, cy+9,  r*0.60,  0, Math.PI*2); ctx.fill();
+    // Tile wrap
+    if (ox + r > CW) {
+      const ox2 = ox - CW;
+      ctx.beginPath(); ctx.arc(ox2, cy, r, 0, Math.PI*2); ctx.fill();
+    }
   });
 
-  // Grass
-  const gg = ctx.createLinearGradient(0, 200, 0, CH);
-  gg.addColorStop(0, "#5CB85C"); gg.addColorStop(1, "#3E9E3E");
-  ctx.fillStyle = gg; ctx.fillRect(0, 200, CW, CH - 200);
-
-  // Horizon blend
-  const hg = ctx.createLinearGradient(0, 192, 0, 222);
-  hg.addColorStop(0, "#A8D8EF"); hg.addColorStop(1, "#5CB85C");
-  ctx.fillStyle = hg; ctx.fillRect(0, 192, CW, 30);
-}
-
-function drawMountains(ctx) {
-  const mts = [
-    [0, 178, 118, 38, 246, 178],
-    [300, 172, 462, 22, 608, 172],
-    [622, 178, 742, 47, 872, 178],
-  ];
-  mts.forEach(([x1,y1,mx,my,x2,y2], i) => {
-    ctx.fillStyle = i === 1 ? "#88B8CA" : "#7AABB8";
-    ctx.beginPath(); ctx.moveTo(x1, y1);
-    ctx.quadraticCurveTo(mx, my, x2, y2);
-    ctx.lineTo(x2, 210); ctx.lineTo(x1, 210); ctx.fill();
+  // Mountains (stronger parallax)
+  const mOff = ((-camAngle / (Math.PI * 2)) * CW * 1.3 + CW * 4) % CW;
+  [-CW, 0, CW].forEach(tile => {
+    const ox = mOff + tile;
+    // Far (blue-grey)
+    const mtns = [
+      [ox+0,   HORIZON_Y, ox+125, HORIZON_Y-68, ox+255, HORIZON_Y],
+      [ox+295, HORIZON_Y, ox+480, HORIZON_Y-108,ox+665, HORIZON_Y],
+      [ox+635, HORIZON_Y, ox+768, HORIZON_Y-72, ox+900, HORIZON_Y],
+    ];
+    mtns.forEach(([x1,y1,mx,my,x2,y2], mi) => {
+      ctx.fillStyle = mi === 1 ? "#88B4C8" : "#7AAABB";
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.quadraticCurveTo(mx, my, x2, y2);
+      ctx.lineTo(x2, HORIZON_Y + 2);
+      ctx.lineTo(x1, HORIZON_Y + 2);
+      ctx.fill();
+    });
+    // Snow caps
+    ctx.fillStyle = "rgba(255,255,255,0.88)";
+    [[ox+390,HORIZON_Y-88,ox+480,HORIZON_Y-108,ox+568,HORIZON_Y-88],
+     [ox+642,HORIZON_Y-58,ox+768,HORIZON_Y-72, ox+894,HORIZON_Y-58]].forEach(([x1,y1,mx,my,x2,y2]) => {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.quadraticCurveTo(mx, my, x2, y2);
+      ctx.closePath();
+      ctx.fill();
+    });
   });
-  // Snow caps
-  ctx.fillStyle = "rgba(255,255,255,0.82)";
-  [[360,37,462,15,560,37],[638,60,742,40,846,60]].forEach(([x1,y1,mx,my,x2,y2]) => {
-    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.quadraticCurveTo(mx,my,x2,y2); ctx.closePath(); ctx.fill();
-  });
+
+  // Horizon glow (blends sky into road)
+  const hg = ctx.createLinearGradient(0, HORIZON_Y - 4, 0, HORIZON_Y + 12);
+  hg.addColorStop(0, "rgba(170,224,245,0.9)");
+  hg.addColorStop(1, "rgba(92,184,92,0.0)");
+  ctx.fillStyle = hg;
+  ctx.fillRect(0, HORIZON_Y - 4, CW, 16);
 }
 
-function drawTree(ctx, x, y, s) {
-  // Trunk
-  ctx.fillStyle = "#8B5E3C";
-  ctx.fillRect(x - 3*s, y, 6*s, 18*s);
-  // Blossom cloud
-  const pinks = ["#FFB7C5","#FF9EBB","#FFCDD9","#FF85A1","#FFD0DC","#FF9EBB"];
-  const offsets = [[0,-7],[-11,-3],[11,-3],[-6,-15],[6,-15],[0,-19],[-13,-11],[13,-11]];
-  offsets.forEach(([ox,oy], i) => {
-    ctx.fillStyle = pinks[i % pinks.length];
-    ctx.globalAlpha = 0.86;
-    ctx.beginPath(); ctx.arc(x + ox*s, y + oy*s, 10*s, 0, Math.PI*2); ctx.fill();
-  });
-  ctx.globalAlpha = 1;
-}
+// =====================================================================
+// 3D RENDERING – ROAD STRIPS  (painter's algorithm: far → near)
+// Each strip = trapezoid between two consecutive projected smooth-pts.
+// =====================================================================
+function drawRoad3D(ctx, smooth, playerHint, camX, camY, cos_a, sin_a) {
+  const N      = smooth.length;
+  const OFFSET = 6; // allows i from -OFFSET to DRAW_SEGS+1
+  const BUF    = DRAW_SEGS + OFFSET + 2;
 
-function buildPath(ctx, smooth) {
-  ctx.beginPath();
-  ctx.moveTo(smooth[0].x, smooth[0].y);
-  for (let i = 1; i < smooth.length; i++) ctx.lineTo(smooth[i].x, smooth[i].y);
-  ctx.lineTo(smooth[0].x, smooth[0].y);
-}
+  // Build projected-point array
+  const pts = new Array(BUF).fill(null);
+  for (let i = -OFFSET; i <= DRAW_SEGS + 1; i++) {
+    const idx = ((playerHint + i) % N + N) % N;
+    const p   = smooth[idx];
+    const dx  = p.x - camX, dy = p.y - camY;
+    const fwd = dx * cos_a + dy * sin_a;
+    const lat = -dx * sin_a + dy * cos_a;
+    if (fwd <= 0.5) { pts[i + OFFSET] = null; continue; }
+    pts[i + OFFSET] = {
+      screenY: HORIZON_Y + PROJ_YC / fwd,
+      screenX: CW / 2 + lat * FOCAL_X / fwd,
+      hw:      TH * FOCAL_X / fwd,
+      fwd,
+      absIdx:  idx,
+    };
+  }
 
-function drawTrack(ctx, smooth) {
-  ctx.save();
-  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  // Base grass fill (catch-all below horizon)
+  ctx.fillStyle = "#5CB85C";
+  ctx.fillRect(0, HORIZON_Y, CW, CH - HORIZON_Y);
 
-  // White curb border
-  buildPath(ctx, smooth);
-  ctx.lineWidth = TW + 16; ctx.strokeStyle = "#E6E2DC"; ctx.stroke();
+  // Draw from far (high i) → near (low i)
+  for (let i = DRAW_SEGS; i >= -OFFSET + 1; i--) {
+    const far  = pts[i + 1 + OFFSET]; // further point (i+1) – smaller screenY
+    const near = pts[i + OFFSET];     // closer  point (i)   – larger  screenY
+    if (!far || !near) continue;
 
-  // Asphalt
-  buildPath(ctx, smooth);
-  ctx.lineWidth = TW; ctx.strokeStyle = "#464A54"; ctx.stroke();
+    const ty = Math.max(HORIZON_Y, Math.min(far.screenY,  CH));
+    const by = Math.max(HORIZON_Y, Math.min(near.screenY, CH + 300));
+    if (by <= ty + 0.3) continue;
 
-  // Dashed center line
-  buildPath(ctx, smooth);
-  ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,210,0.44)";
-  ctx.setLineDash([16,12]); ctx.stroke(); ctx.setLineDash([]);
+    // Alternating grass colour (visual depth rhythm)
+    const alt = Math.floor(Math.abs(i) / 2) % 2;
+    ctx.fillStyle = alt ? "#4CAF4C" : "#5CB85C";
+    ctx.fillRect(0, ty, CW, by - ty);
 
-  ctx.restore();
-}
+    // Start/finish line detection
+    const isStart = far.absIdx < 6 || far.absIdx > N - 6;
 
-function drawStartFinish(ctx, smooth) {
-  const pt   = smooth[0];
-  const pt2  = smooth[4];
-  const ang  = Math.atan2(pt2.y - pt.y, pt2.x - pt.x);
-  const perp = ang + Math.PI / 2;
-  const half = TH - 2;
-  const cellH = (TH * 2) / 6;
+    // Road trapezoid
+    if (isStart) {
+      // Alternating black/white checks for start/finish
+      const checkAlt = Math.floor(far.absIdx / 2) % 2;
+      ctx.fillStyle = checkAlt === 0 ? "#FFFFFF" : "#222222";
+    } else {
+      ctx.fillStyle = alt ? "#474B55" : "#525660";
+    }
+    ctx.beginPath();
+    ctx.moveTo(far.screenX  - far.hw,  ty);
+    ctx.lineTo(far.screenX  + far.hw,  ty);
+    ctx.lineTo(near.screenX + near.hw, by);
+    ctx.lineTo(near.screenX - near.hw, by);
+    ctx.closePath();
+    ctx.fill();
 
-  for (let r = 0; r < 2; r++) {
-    for (let c = 0; c < 6; c++) {
-      ctx.fillStyle = (r + c) % 2 === 0 ? "#FFFFFF" : "#111111";
-      ctx.save();
-      ctx.translate(
-        pt.x + Math.cos(perp) * (cellH * c - half) + Math.cos(ang) * (r * 5),
-        pt.y + Math.sin(perp) * (cellH * c - half) + Math.sin(ang) * (r * 5)
-      );
-      ctx.rotate(ang);
-      ctx.fillRect(0, 0, 5, cellH + 0.5);
-      ctx.restore();
+    // Kerb strips (red / white alternating every 5 strips)
+    const ca  = Math.floor(Math.abs(i) / 5) % 2;
+    const cft = Math.max(1.5, far.hw  * 0.11);
+    const cfn = Math.max(1.5, near.hw * 0.11);
+    ctx.fillStyle = ca ? "#EEEEEE" : "#DD2222";
+    // Left kerb
+    ctx.beginPath();
+    ctx.moveTo(far.screenX  - far.hw,       ty);
+    ctx.lineTo(far.screenX  - far.hw + cft, ty);
+    ctx.lineTo(near.screenX - near.hw + cfn, by);
+    ctx.lineTo(near.screenX - near.hw,      by);
+    ctx.fill();
+    // Right kerb
+    ctx.beginPath();
+    ctx.moveTo(far.screenX  + far.hw  - cft, ty);
+    ctx.lineTo(far.screenX  + far.hw,        ty);
+    ctx.lineTo(near.screenX + near.hw,       by);
+    ctx.lineTo(near.screenX + near.hw - cfn, by);
+    ctx.fill();
+
+    // Centre dashes (every 6 strips, 4 on / 2 off)
+    if (!isStart && (Math.abs(i) % 6) < 4) {
+      const df = Math.max(0.5, far.hw  * 0.024);
+      const dn = Math.max(0.5, near.hw * 0.024);
+      ctx.fillStyle = "rgba(255,255,175,0.58)";
+      ctx.beginPath();
+      ctx.moveTo(far.screenX  - df, ty);
+      ctx.lineTo(far.screenX  + df, ty);
+      ctx.lineTo(near.screenX + dn, by);
+      ctx.lineTo(near.screenX - dn, by);
+      ctx.fill();
     }
   }
 }
 
-function roundedRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y); ctx.arc(x + w - r, y + r, r, -Math.PI/2, 0);
-  ctx.lineTo(x + w, y + h - r); ctx.arc(x + w - r, y + h - r, r, 0, Math.PI/2);
-  ctx.lineTo(x + r, y + h); ctx.arc(x + r, y + h - r, r, Math.PI/2, Math.PI);
-  ctx.lineTo(x, y + r); ctx.arc(x + r, y + r, r, Math.PI, -Math.PI/2);
-  ctx.closePath();
+// =====================================================================
+// 3D RENDERING – CHERRY BLOSSOM TREE
+// =====================================================================
+function drawTree3D(ctx, sx, sy_g, effScale) {
+  if (effScale < 0.04) return;
+  if (sy_g < HORIZON_Y || sy_g > CH + 50) return;
+
+  const trunkH = Math.min(72, 36 * effScale);
+  const trunkW = Math.min(10, 7  * effScale);
+  const bloomR = Math.min(40, 22 * effScale);
+  if (trunkH < 2) return;
+
+  // Trunk
+  ctx.fillStyle = "#8B5E3C";
+  ctx.fillRect(sx - trunkW / 2, sy_g - trunkH, trunkW, trunkH);
+
+  // Blossom cloud
+  const pinks = ["#FFB7C5", "#FF9EBB", "#FFCDD9", "#FF85A1", "#FFDDE6"];
+  const offs  = [[0,-0.82],[-.56,-.32],[.56,-.32],[0,-1.34],[-.40,-1.12],[.40,-1.12],[0,-1.78]];
+  offs.forEach(([ox, oy], i) => {
+    if (bloomR < 1) return;
+    ctx.fillStyle  = pinks[i % pinks.length];
+    ctx.globalAlpha = 0.88;
+    ctx.beginPath();
+    ctx.arc(sx + ox * bloomR * 1.42, sy_g - trunkH + oy * bloomR, bloomR, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
 }
 
-function drawCar(ctx, car) {
-  ctx.save();
-  ctx.translate(car.x, car.y);
-  ctx.rotate(car.angle);
+// =====================================================================
+// 3D RENDERING – SCENERY (all trees, depth-sorted far-first)
+// =====================================================================
+function drawScenery3D(ctx, camX, camY, cos_a, sin_a) {
+  TREES_3D
+    .map(t => {
+      const r = proj(t.x, t.y, camX, camY, cos_a, sin_a);
+      return r ? { ...r, s: t.s } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.fwd - a.fwd)
+    .forEach(t => {
+      const effScale = Math.min(1.5, t.scale * TREE_SC * t.s);
+      drawTree3D(ctx, t.screenX, t.screenY, effScale);
+    });
+}
 
-  // Drop shadow
+// =====================================================================
+// 3D RENDERING – AI CAR (viewed from behind, scales with distance)
+// =====================================================================
+function drawAICar3D(ctx, sx, sy_g, scale, color) {
+  if (scale < 0.07) return;
+  const w = Math.min(92, 35 * scale);
+  const h = Math.min(60, 23 * scale);
+  if (w < 3) return;
+
+  const topY = sy_g - h * 1.42;
+
+  // Shadow
   ctx.fillStyle = "rgba(0,0,0,0.22)";
-  ctx.beginPath(); ctx.ellipse(2, 2, CAR_H/2+2, CAR_W/2+1, 0, 0, Math.PI*2); ctx.fill();
-
-  // Body
-  ctx.fillStyle = car.color;
-  roundedRect(ctx, -CAR_H/2, -CAR_W/2, CAR_H, CAR_W, 4);
+  ctx.beginPath();
+  ctx.ellipse(sx, sy_g - 3, w * 0.52, w * 0.12, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Roof panel
-  ctx.fillStyle = "rgba(0,0,0,0.14)";
-  ctx.fillRect(-CAR_H/2 + 6, -CAR_W/2 + 3, CAR_H - 12, CAR_W - 6);
+  // Body (trapezoid – wider at bottom)
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(sx - w * 0.46, sy_g - h * 0.80);
+  ctx.lineTo(sx + w * 0.46, sy_g - h * 0.80);
+  ctx.lineTo(sx + w * 0.56, sy_g - 3);
+  ctx.lineTo(sx - w * 0.56, sy_g - 3);
+  ctx.closePath();
+  ctx.fill();
 
-  // Windshield (front)
-  ctx.fillStyle = "rgba(175,215,255,0.72)";
-  ctx.fillRect(CAR_H/2 - 9, -CAR_W/2 + 3, 7, CAR_W - 6);
+  // Roof
+  ctx.fillStyle = "rgba(0,0,0,0.20)";
+  ctx.beginPath();
+  ctx.moveTo(sx - w * 0.28, sy_g - h * 0.80);
+  ctx.lineTo(sx + w * 0.28, sy_g - h * 0.80);
+  ctx.lineTo(sx + w * 0.22, topY + 2);
+  ctx.lineTo(sx - w * 0.22, topY + 2);
+  ctx.closePath();
+  ctx.fill();
 
   // Rear window
-  ctx.fillStyle = "rgba(175,215,255,0.52)";
-  ctx.fillRect(-CAR_H/2 + 2, -CAR_W/2 + 3, 5, CAR_W - 6);
+  ctx.fillStyle = "rgba(150,212,255,0.62)";
+  ctx.beginPath();
+  ctx.moveTo(sx - w * 0.20, sy_g - h * 0.80);
+  ctx.lineTo(sx + w * 0.20, sy_g - h * 0.80);
+  ctx.lineTo(sx + w * 0.15, topY + 3);
+  ctx.lineTo(sx - w * 0.15, topY + 3);
+  ctx.fill();
 
-  // Headlights (front)
-  ctx.fillStyle = "#FFFF88";
-  ctx.fillRect(CAR_H/2 - 2, -CAR_W/2 + 2, 3, 4);
-  ctx.fillRect(CAR_H/2 - 2, CAR_W/2 - 6, 3, 4);
-
-  // Taillights (rear)
+  // Taillights
   ctx.fillStyle = "#FF2222";
-  ctx.fillRect(-CAR_H/2, -CAR_W/2 + 2, 3, 4);
-  ctx.fillRect(-CAR_H/2, CAR_W/2 - 6, 3, 4);
+  const tlw = Math.max(1, w * 0.10), tlh = Math.max(1, h * 0.26);
+  ctx.fillRect(sx - w * 0.51, sy_g - h * 0.76, tlw, tlh);
+  ctx.fillRect(sx + w * 0.41, sy_g - h * 0.76, tlw, tlh);
+
+  // Wheels
+  ctx.fillStyle = "#1A1A1A";
+  const ww = Math.max(1, w * 0.13), wh = Math.max(0.5, w * 0.07);
+  ctx.beginPath();
+  ctx.ellipse(sx - w * 0.46, sy_g - 4, ww, wh, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(sx + w * 0.46, sy_g - 4, ww, wh, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// =====================================================================
+// 3D RENDERING – AI CARS IN SCENE (depth-sorted)
+// =====================================================================
+function drawCarsInScene3D(ctx, cars, camX, camY, cos_a, sin_a) {
+  cars
+    .map(car => {
+      const r = proj(car.x, car.y, camX, camY, cos_a, sin_a);
+      return r ? { ...r, color: car.color } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.fwd - a.fwd)
+    .forEach(c => drawAICar3D(ctx, c.screenX, c.screenY, c.scale, c.color));
+}
+
+// =====================================================================
+// 3D RENDERING – PLAYER CAR (fixed bottom-centre, leans on steer)
+// =====================================================================
+function drawPlayerCar3D(ctx, carColor, steerLean) {
+  const cx = CW / 2;
+  const cy = CH - 58;
+  const w  = 108, h = 60;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(steerLean * 0.09); // subtle body lean on steering
+
+  // Road shadow
+  ctx.fillStyle = "rgba(0,0,0,0.26)";
+  ctx.beginPath();
+  ctx.ellipse(0, h * 0.48 + 10, w * 0.52, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Main body (trapezoid – wider at bottom, from behind)
+  ctx.fillStyle = carColor;
+  ctx.beginPath();
+  ctx.moveTo(-w * 0.43, -h * 0.50);
+  ctx.lineTo( w * 0.43, -h * 0.50);
+  ctx.lineTo( w * 0.53,  h * 0.43);
+  ctx.lineTo(-w * 0.53,  h * 0.43);
+  ctx.closePath();
+  ctx.fill();
+
+  // Body highlight (upper edge)
+  ctx.fillStyle = "rgba(255,255,255,0.14)";
+  ctx.fillRect(-w * 0.41, -h * 0.48, w * 0.82, h * 0.13);
+
+  // Roof
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.beginPath();
+  ctx.moveTo(-w * 0.30, -h * 0.50);
+  ctx.lineTo( w * 0.30, -h * 0.50);
+  ctx.lineTo( w * 0.22, -h * 1.02);
+  ctx.lineTo(-w * 0.22, -h * 1.02);
+  ctx.closePath();
+  ctx.fill();
+
+  // Rear window
+  ctx.fillStyle = "rgba(150,216,255,0.68)";
+  ctx.beginPath();
+  ctx.moveTo(-w * 0.22, -h * 0.50);
+  ctx.lineTo( w * 0.22, -h * 0.50);
+  ctx.lineTo( w * 0.16, -h * 0.99);
+  ctx.lineTo(-w * 0.16, -h * 0.99);
+  ctx.closePath();
+  ctx.fill();
+
+  // Left taillight glow + lens
+  ctx.fillStyle = "rgba(255,50,50,0.32)";
+  ctx.fillRect(-w * 0.54, -h * 0.44, w * 0.13, h * 0.38);
+  ctx.fillStyle = "#FF2222";
+  ctx.fillRect(-w * 0.51, -h * 0.40, w * 0.09, h * 0.30);
+
+  // Right taillight glow + lens
+  ctx.fillStyle = "rgba(255,50,50,0.32)";
+  ctx.fillRect( w * 0.41, -h * 0.44, w * 0.13, h * 0.38);
+  ctx.fillStyle = "#FF2222";
+  ctx.fillRect( w * 0.42, -h * 0.40, w * 0.09, h * 0.30);
+
+  // Rear bumper
+  ctx.fillStyle = "rgba(0,0,0,0.26)";
+  ctx.fillRect(-w * 0.52, h * 0.36, w * 1.04, h * 0.08);
+
+  // Exhaust pipes
+  ctx.fillStyle = "#999";
+  ctx.fillRect(-w * 0.19, h * 0.38, w * 0.08, h * 0.07);
+  ctx.fillRect( w * 0.11, h * 0.38, w * 0.08, h * 0.07);
+
+  // Left rear wheel
+  ctx.fillStyle = "#1C1C1C";
+  ctx.beginPath();
+  ctx.ellipse(-w * 0.49, h * 0.32, w * 0.145, h * 0.22, 0.07, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#666";
+  ctx.beginPath();
+  ctx.ellipse(-w * 0.49, h * 0.32, w * 0.06, h * 0.10, 0.07, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Right rear wheel
+  ctx.fillStyle = "#1C1C1C";
+  ctx.beginPath();
+  ctx.ellipse( w * 0.49, h * 0.32, w * 0.145, h * 0.22, -0.07, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#666";
+  ctx.beginPath();
+  ctx.ellipse( w * 0.49, h * 0.32, w * 0.06, h * 0.10, -0.07, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.restore();
 }
 
-function renderAll(canvas, gs) {
-  const ctx = canvas.getContext("2d");
+// =====================================================================
+// MAIN 3D RENDER FUNCTION
+// =====================================================================
+function render3D(canvas, gs, steerLean) {
+  const ctx  = canvas.getContext("2d");
+  const car  = gs.player;
+  const cosA = Math.cos(car.angle);
+  const sinA = Math.sin(car.angle);
+  const camX = car.x - cosA * CAM_BACK;
+  const camY = car.y - sinA * CAM_BACK;
+
   ctx.clearRect(0, 0, CW, CH);
-  drawBackground(ctx);
-  drawMountains(ctx);
-  TREES.forEach(t => drawTree(ctx, t.x, t.y, t.s));
-  drawTrack(ctx, gs.smooth);
-  drawStartFinish(ctx, gs.smooth);
-  if (gs.player && gs.ai1 && gs.ai2) {
-    // Draw cars furthest-back first
-    [gs.ai1, gs.ai2, gs.player]
-      .slice().sort((a, b) => a.hint - b.hint)
-      .forEach(c => drawCar(ctx, c));
+
+  // 1. Sky + mountains (fills 0 → HORIZON_Y)
+  drawSky3D(ctx, car.angle);
+
+  // 2. Road (fills HORIZON_Y → CH with grass + asphalt strips)
+  drawRoad3D(ctx, gs.smooth, car.hint, camX, camY, cosA, sinA);
+
+  // 3. Cherry-blossom trees (on grass, depth-sorted)
+  drawScenery3D(ctx, camX, camY, cosA, sinA);
+
+  // 4. AI cars (on road, depth-sorted)
+  if (gs.ai1 && gs.ai2) {
+    drawCarsInScene3D(ctx, [gs.ai1, gs.ai2], camX, camY, cosA, sinA);
   }
+
+  // 5. Player car (always at bottom-centre, on top of everything)
+  drawPlayerCar3D(ctx, car.color, steerLean);
 }
 
-function renderStaticTrack(canvas) {
-  renderAll(canvas, { smooth: SMOOTH });
+// Static initial render (no cars, used before race starts)
+function renderStaticTrack3D(canvas) {
+  const startAngle = Math.atan2(
+    SMOOTH[1].y - SMOOTH[0].y,
+    SMOOTH[1].x - SMOOTH[0].x
+  );
+  const cosA = Math.cos(startAngle);
+  const sinA = Math.sin(startAngle);
+  const camX = SMOOTH[4].x - cosA * CAM_BACK;
+  const camY = SMOOTH[4].y - sinA * CAM_BACK;
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, CW, CH);
+  drawSky3D(ctx, startAngle);
+  drawRoad3D(ctx, SMOOTH, 4, camX, camY, cosA, sinA);
+  drawScenery3D(ctx, camX, camY, cosA, sinA);
 }
 
 // =====================================================================
@@ -390,22 +687,19 @@ function fmtTime(sec) {
 // RACING GAME COMPONENT
 // =====================================================================
 export default function RacingGame() {
-  const [phase, setPhase]         = useState("car-select");
+  const [phase, setPhase]             = useState("car-select");
   const [selectedCar, setSelectedCar] = useState("red");
-  const [cdNum, setCdNum]         = useState(3);
-  const [hud, setHud]             = useState({ spd: 0, lap: 1, time: 0, pos: 1 });
-  const [result, setResult]       = useState(null);
+  const [cdNum, setCdNum]             = useState(3);
+  const [hud, setHud]                 = useState({ spd: 0, lap: 1, time: 0, pos: 1 });
+  const [result, setResult]           = useState(null);
 
-  const canvasRef  = useRef(null);
-  const gsRef      = useRef(null);
-  const keysRef    = useRef(new Set());
-  const rafRef     = useRef(null);
-  const lastTRef   = useRef(null);
-  const startTRef  = useRef(null);
-  const phaseRef   = useRef("car-select");
-
-  // Keep phaseRef in sync with phase state
-  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  const canvasRef     = useRef(null);
+  const gsRef         = useRef(null);
+  const keysRef       = useRef(new Set());
+  const rafRef        = useRef(null);
+  const lastTRef      = useRef(null);
+  const startTRef     = useRef(null);
+  const steerLeanRef  = useRef(0); // visual lean on steering (3D only)
 
   // Keyboard handlers
   useEffect(() => {
@@ -415,10 +709,10 @@ export default function RacingGame() {
     };
     const onUp = (e) => keysRef.current.delete(e.code);
     window.addEventListener("keydown", onDown);
-    window.addEventListener("keyup", onUp);
+    window.addEventListener("keyup",   onUp);
     return () => {
       window.removeEventListener("keydown", onDown);
-      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("keyup",   onUp);
     };
   }, []);
 
@@ -427,13 +721,13 @@ export default function RacingGame() {
 
   // Render static track on mount
   useEffect(() => {
-    if (canvasRef.current) renderStaticTrack(canvasRef.current);
+    if (canvasRef.current) renderStaticTrack3D(canvasRef.current);
   }, []);
 
-  // Re-render when phase goes to countdown (after initGameState)
+  // Re-render when countdown phase starts
   useEffect(() => {
     if (phase === "countdown" && canvasRef.current && gsRef.current) {
-      renderAll(canvasRef.current, gsRef.current);
+      render3D(canvasRef.current, gsRef.current, 0);
     }
   }, [phase]);
 
@@ -447,6 +741,7 @@ export default function RacingGame() {
       ai2:           makeCar(158, 475, startAng, aiCols[1], false, 2),
       finishedCount: 0,
     };
+    steerLeanRef.current = 0;
   }, []);
 
   const gameLoop = useCallback((ts) => {
@@ -465,6 +760,10 @@ export default function RacingGame() {
     p.iLeft  = keys.has("ArrowLeft")  || keys.has("KeyA");
     p.iRight = keys.has("ArrowRight") || keys.has("KeyD");
 
+    // Visual steering lean (lerp toward ±1)
+    const targetLean = (p.iLeft ? -1 : 0) + (p.iRight ? 1 : 0);
+    steerLeanRef.current += (targetLean - steerLeanRef.current) * 0.09;
+
     // AI
     aiSteer(gs.ai1, gs.smooth);
     aiSteer(gs.ai2, gs.smooth);
@@ -475,12 +774,12 @@ export default function RacingGame() {
     physicsStep(gs.ai2, dt);
 
     // Progress & laps
-    trackProgress(p, gs.smooth);
+    trackProgress(p,      gs.smooth);
     trackProgress(gs.ai1, gs.smooth);
     trackProgress(gs.ai2, gs.smooth);
 
     // Boundary
-    clampToTrack(p, gs.smooth);
+    clampToTrack(p,      gs.smooth);
     clampToTrack(gs.ai1, gs.smooth);
     clampToTrack(gs.ai2, gs.smooth);
 
@@ -493,21 +792,21 @@ export default function RacingGame() {
       }
     });
 
-    // Render
-    if (canvasRef.current) renderAll(canvasRef.current, gs);
+    // Render (3D perspective)
+    if (canvasRef.current) render3D(canvasRef.current, gs, steerLeanRef.current);
 
-    // HUD update
+    // HUD
     const elapsed = startTRef.current ? (ts - startTRef.current) / 1000 : 0;
-    const pos = getRacePos(p, gs.ai1, gs.ai2);
+    const pos     = getRacePos(p, gs.ai1, gs.ai2);
     setHud({ spd: Math.round(Math.abs(p.speed) * 55), lap: Math.min(p.lap, TOTAL_LAPS), time: elapsed, pos });
 
-    // Race end: player finished
+    // End: player finished
     if (p.finished) {
       setResult(p.finPos === 1 ? "win" : "lose");
       setPhase("finished");
       return;
     }
-    // Race end: both AIs done, player hasn't
+    // End: both AIs done before player
     if (gs.ai1.finished && gs.ai2.finished && !p.finished) {
       p.finPos = 3;
       setResult("lose");
@@ -521,7 +820,6 @@ export default function RacingGame() {
   const startCountdown = useCallback(() => {
     initGameState(selectedCar);
     setPhase("countdown");
-
     let c = 3;
     setCdNum(c);
     const timer = setInterval(() => {
@@ -529,7 +827,7 @@ export default function RacingGame() {
       if (c > 0) {
         setCdNum(c);
       } else {
-        setCdNum(0); // "GO!"
+        setCdNum(0);
         clearInterval(timer);
         setTimeout(() => {
           setPhase("racing");
@@ -544,11 +842,12 @@ export default function RacingGame() {
   const handleRestart = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     lastTRef.current = null;
+    steerLeanRef.current = 0;
     setResult(null);
     setHud({ spd: 0, lap: 1, time: 0, pos: 1 });
     setPhase("car-select");
     setTimeout(() => {
-      if (canvasRef.current) renderStaticTrack(canvasRef.current);
+      if (canvasRef.current) renderStaticTrack3D(canvasRef.current);
     }, 50);
   }, []);
 
@@ -567,7 +866,7 @@ export default function RacingGame() {
         {phase === "car-select" && (
           <div
             className="absolute inset-0 flex flex-col items-center justify-center"
-            style={{ background: "rgba(10,20,40,0.68)", backdropFilter: "blur(6px)" }}
+            style={{ background: "rgba(8,18,36,0.72)", backdropFilter: "blur(6px)" }}
             data-testid="car-select-screen"
           >
             <h2
@@ -580,7 +879,7 @@ export default function RacingGame() {
 
             <div className="flex gap-5 mb-10 flex-wrap justify-center px-4">
               {Object.entries(CARS).map(([key, car]) => {
-                const selected = selectedCar === key;
+                const sel = selectedCar === key;
                 return (
                   <button
                     key={key}
@@ -589,19 +888,17 @@ export default function RacingGame() {
                     className="flex flex-col items-center p-5 rounded-2xl border-2 transition-all duration-200 cursor-pointer focus:outline-none"
                     style={{
                       minWidth: 148,
-                      borderColor:  selected ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.2)",
-                      background:   selected ? `${car.color}28` : "rgba(255,255,255,0.06)",
+                      borderColor:    sel ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.2)",
+                      background:     sel ? `${car.color}28` : "rgba(255,255,255,0.06)",
                       backdropFilter: "blur(12px)",
-                      transform: selected ? "scale(1.08)" : "scale(1)",
-                      boxShadow: selected ? `0 0 28px ${car.color}66` : "none",
+                      transform:  sel ? "scale(1.08)" : "scale(1)",
+                      boxShadow:  sel ? `0 0 28px ${car.color}66` : "none",
                     }}
                   >
-                    {/* Car shape illustration */}
                     <div
                       className="mb-3 flex items-center justify-center rounded-xl"
                       style={{ width: 80, height: 48, background: `${car.color}22`, border: `2px solid ${car.color}66` }}
                     >
-                      {/* Miniature car icon drawn with divs */}
                       <div style={{ position: "relative", width: 44, height: 22 }}>
                         <div style={{ position: "absolute", inset: 0, borderRadius: 5, background: car.color }} />
                         <div style={{ position: "absolute", top: 3, left: 8, right: 8, height: 10, borderRadius: 3, background: "rgba(180,220,255,0.7)" }} />
@@ -611,16 +908,12 @@ export default function RacingGame() {
                         <div style={{ position: "absolute", bottom: 2, left: 2, width: 4, height: 4, borderRadius: "50%", background: "#FF2222" }} />
                       </div>
                     </div>
-
                     <div className="text-white font-bold text-sm">{car.name}</div>
                     <div className="text-white/50 text-xs mt-0.5">{car.stat}</div>
-
-                    {/* Stat bar */}
                     <div className="mt-2.5 w-full h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.15)" }}>
                       <div style={{ width: `${car.rating * 10}%`, height: "100%", background: car.color, borderRadius: 999 }} />
                     </div>
-
-                    {selected && (
+                    {sel && (
                       <div className="mt-2 text-xs font-bold tracking-widest" style={{ color: car.color }}>
                         SELECTED
                       </div>
@@ -649,7 +942,7 @@ export default function RacingGame() {
         {phase === "countdown" && (
           <div
             className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
-            style={{ background: "rgba(0,0,0,0.35)" }}
+            style={{ background: "rgba(0,0,0,0.30)" }}
           >
             <div
               key={cdNum}
@@ -657,19 +950,19 @@ export default function RacingGame() {
               data-testid="countdown-display"
               style={{
                 fontFamily: "Unbounded, sans-serif",
-                fontSize: cdNum === 0 ? "7rem" : "9rem",
+                fontSize:   cdNum === 0 ? "7rem" : "9rem",
                 fontWeight: 900,
-                color: cdNum === 0 ? "#75D481" : "#FFFFFF",
+                color:      cdNum === 0 ? "#75D481" : "#FFFFFF",
                 textShadow: cdNum === 0
                   ? "0 0 50px #75D481, 0 0 100px #75D481"
-                  : "0 4px 20px rgba(0,0,0,0.8)",
+                  : "0 4px 20px rgba(0,0,0,0.85)",
                 lineHeight: 1,
               }}
             >
               {cdNum === 0 ? "GO!" : cdNum}
             </div>
-            <p className="text-white/60 text-sm mt-4" style={{ fontFamily: "Outfit, sans-serif" }}>
-              {cdNum > 0 ? "Get ready..." : "Full speed ahead!"}
+            <p className="text-white/55 text-sm mt-4" style={{ fontFamily: "Outfit, sans-serif" }}>
+              {cdNum > 0 ? "Get ready…" : "Full speed ahead!"}
             </p>
           </div>
         )}
@@ -677,7 +970,6 @@ export default function RacingGame() {
         {/* ── HUD ── */}
         {phase === "racing" && (
           <div className="absolute top-3 left-3 right-3 flex justify-between items-center pointer-events-none gap-2">
-            {/* Speed */}
             <div
               className="flex items-center gap-1.5 px-4 py-2 rounded-full"
               style={{ background: "rgba(0,0,0,0.62)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.18)" }}
@@ -689,7 +981,6 @@ export default function RacingGame() {
               <span className="text-white/55 text-xs">km/h</span>
             </div>
 
-            {/* Lap */}
             <div
               className="flex items-center gap-1.5 px-4 py-2 rounded-full"
               style={{ background: "rgba(0,0,0,0.62)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.18)" }}
@@ -700,7 +991,6 @@ export default function RacingGame() {
               </span>
             </div>
 
-            {/* Timer */}
             <div
               className="flex items-center gap-1.5 px-4 py-2 rounded-full"
               style={{ background: "rgba(0,0,0,0.62)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.18)" }}
@@ -711,13 +1001,12 @@ export default function RacingGame() {
               </span>
             </div>
 
-            {/* Position */}
             <div
               className="flex items-center gap-1 px-4 py-2 rounded-full transition-all"
               style={{
-                background: hud.pos === 1 ? "rgba(117,212,129,0.75)" : "rgba(0,0,0,0.62)",
+                background:     hud.pos === 1 ? "rgba(117,212,129,0.75)" : "rgba(0,0,0,0.62)",
                 backdropFilter: "blur(8px)",
-                border: "1px solid rgba(255,255,255,0.18)",
+                border:         "1px solid rgba(255,255,255,0.18)",
               }}
             >
               <span data-testid="hud-pos" className="text-xl font-black text-white" style={{ fontFamily: "Unbounded, sans-serif" }}>
@@ -727,13 +1016,13 @@ export default function RacingGame() {
           </div>
         )}
 
-        {/* Controls reminder during racing */}
+        {/* Controls reminder */}
         {phase === "racing" && (
           <div
-            className="absolute bottom-3 right-3 pointer-events-none text-xs text-white/40"
+            className="absolute bottom-3 right-3 pointer-events-none text-xs text-white/38"
             style={{ fontFamily: "Outfit, sans-serif" }}
           >
-            WASD / Arrow Keys to drive
+            WASD / Arrow Keys
           </div>
         )}
 
@@ -744,15 +1033,14 @@ export default function RacingGame() {
             style={{ background: "rgba(0,0,0,0.78)", backdropFilter: "blur(10px)" }}
             data-testid="end-screen"
           >
-            {/* Result */}
             <div
               data-testid="race-result"
               className={isWin ? "result-win" : "result-lose"}
               style={{
                 fontFamily: "Unbounded, sans-serif",
-                fontSize: "5.5rem",
+                fontSize:   "5.5rem",
                 fontWeight: 900,
-                color: isWin ? "#75D481" : "#FF5252",
+                color:      isWin ? "#75D481" : "#FF5252",
                 lineHeight: 1,
                 marginBottom: "0.5rem",
               }}
@@ -773,22 +1061,22 @@ export default function RacingGame() {
               </span>
             </div>
 
-            <div className="flex gap-4">
-              <button
-                data-testid="play-again-btn"
-                onClick={handleRestart}
-                className="px-10 py-4 rounded-2xl text-white font-black text-base uppercase tracking-widest transition-all duration-200 hover:scale-105 hover:brightness-110 active:scale-95"
-                style={{
-                  fontFamily: "Unbounded, sans-serif",
-                  background: isWin
-                    ? "linear-gradient(135deg, #75D481, #4CAF50)"
-                    : "linear-gradient(135deg, #4DA8DA, #3B82F6)",
-                  boxShadow: isWin ? "0 8px 30px rgba(117,212,129,0.5)" : "0 8px 30px rgba(77,168,218,0.5)",
-                }}
-              >
-                PLAY AGAIN
-              </button>
-            </div>
+            <button
+              data-testid="play-again-btn"
+              onClick={handleRestart}
+              className="px-10 py-4 rounded-2xl text-white font-black text-base uppercase tracking-widest transition-all duration-200 hover:scale-105 hover:brightness-110 active:scale-95"
+              style={{
+                fontFamily: "Unbounded, sans-serif",
+                background: isWin
+                  ? "linear-gradient(135deg, #75D481, #4CAF50)"
+                  : "linear-gradient(135deg, #4DA8DA, #3B82F6)",
+                boxShadow: isWin
+                  ? "0 8px 30px rgba(117,212,129,0.5)"
+                  : "0 8px 30px rgba(77,168,218,0.5)",
+              }}
+            >
+              PLAY AGAIN
+            </button>
           </div>
         )}
       </div>
