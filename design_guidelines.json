@@ -1,0 +1,97 @@
+{
+  "theme": "Light",
+  "archetype": "Archetype 6 (Vibrant Play)",
+  "color_palette": {
+    "primary": "#4DA8DA",
+    "secondary": "#FF9EBB",
+    "accent": "#75D481",
+    "background": "#F5F8FA",
+    "surface": "#FFFFFF",
+    "text_primary": "#1E293B",
+    "text_secondary": "#475569",
+    "border": "#E2E8F0",
+    "asphalt": "#5C6370",
+    "win": "#75D481",
+    "lose": "#FF5252"
+  },
+  "typography": {
+    "headings": {
+      "family": "Unbounded",
+      "weights": ["700", "900"],
+      "strategy": "Expressive, tracking-tight, uppercase for major titles. Use text-shadow for readability over canvas.",
+      "google_font_url": "https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&display=swap"
+    },
+    "body": {
+      "family": "Outfit",
+      "weights": ["400", "500", "600"],
+      "strategy": "Clean, highly legible for game instructions and HUD.",
+      "google_font_url": "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap"
+    }
+  },
+  "layout_spacing": {
+    "strategy": "Generous Spacing Philosophy. Bento grid for instructions, massive center stage for game canvas.",
+    "container": "max-w-7xl mx-auto px-6 lg:px-12",
+    "section_gap": "py-24 md:py-32"
+  },
+  "surface_styles": {
+    "cards": "Glassmorphism (Crystal) for Car Selection. bg-white/70 backdrop-blur-xl border border-white/40 shadow-xl rounded-3xl",
+    "game_hud": "Neumorphism mix. Dark/Glass floating pills for Speed, Lap, Timer. bg-black/60 backdrop-blur-md text-white border border-white/20 rounded-full px-6 py-2 shadow-lg",
+    "buttons": "Vibrant, chunky. bg-[#4DA8DA] text-white font-black uppercase tracking-wider rounded-xl hover:-translate-y-1 hover:shadow-lg transition-all"
+  },
+  "animations": {
+    "hover": "Scale up slightly (scale-105), drop shadow increase.",
+    "page_load": "Staggered fade-in up for text. Car selection cards slide in.",
+    "game_events": "Pulse animation on Win/Lose text. Counter ticking animation."
+  },
+  "media": {
+    "hero_background": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/ec24ef92-a34f-4baf-b72d-f76f817a636d/images/bb18d61f58b603e412c47814ef50a1a75ac90a5ad2f1ffe80defd8ec4d6378c0.png",
+      "description": "Vibrant daytime Tokyo landscape with race track"
+    },
+    "car_sprites": {
+      "red": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/ec24ef92-a34f-4baf-b72d-f76f817a636d/images/43985e657c6e92d81cf7e8513cff2787c56090c6d7bf9ea71917839a869e3ef3.png",
+        "description": "Red sports car top-down sprite"
+      },
+      "blue": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/ec24ef92-a34f-4baf-b72d-f76f817a636d/images/69321528b10593983ba320bfe695e59e69a97a843beb0f3620696d7b15397d13.png",
+        "description": "Blue sports car top-down sprite"
+      },
+      "yellow": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/ec24ef92-a34f-4baf-b72d-f76f817a636d/images/458fbd42aad655154b6248a30324d332e222d82bd623b159cfe29e3fa189a9b5.png",
+        "description": "Yellow sports car top-down sprite"
+      }
+    },
+    "scenery_references": [
+      {
+        "url": "https://images.unsplash.com/photo-1598957232485-fab51e0ed7e8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwyfHx0b2t5byUyMGNoZXJyeSUyMGJsb3Nzb21zJTIwZGF5dGltZXxlbnwwfHx8fDE3NzkxODY2MDB8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Pathway between cherry blossom trees (use for visual reference or decorative image)"
+      }
+    ]
+  },
+  "components": {
+    "landing_page": {
+      "structure": "Hero section with background image and glassy header. Game container below hero. Features/Instructions grid (Bento style).",
+      "instructions_to_main_agent": "Use the hero_background as a full-width section or massive rounded container. Include title and WASD/Arrow instructions."
+    },
+    "car_selection": {
+      "structure": "3 Glassmorphic cards overlaid on the game canvas before start.",
+      "instructions_to_main_agent": "Render the car selection UI using React state over the canvas. Cards should pop on hover. Highlight selected car."
+    },
+    "game_canvas": {
+      "structure": "HTML5 Canvas element. Top-down view.",
+      "instructions_to_main_agent": "Draw grey asphalt track with green grass and scattered pink cherry blossom trees. Use the provided car sprites. Ensure 60fps."
+    },
+    "hud_overlay": {
+      "structure": "Floating pill-shaped elements at the top of the canvas.",
+      "instructions_to_main_agent": "Speedometer, Lap Counter, Timer. High contrast (white text on dark glassy pill). Must be absolute positioned over canvas."
+    },
+    "end_screen": {
+      "structure": "Modal overlay using Framer Motion.",
+      "instructions_to_main_agent": "Big bold 'YOU WIN' (green) or 'YOU LOSE' (red) text in Unbounded font. Restart button. Glassy backdrop."
+    }
+  },
+  "testing": {
+    "requirements": "All interactive elements MUST include data-testid attribute. Example: data-testid='start-game-btn', data-testid='car-select-red'."
+  }
+}
