@@ -18,7 +18,7 @@ function App() {
           className="text-2xl font-black text-[#1E293B] mb-2 tracking-tight"
           style={{ fontFamily: "Unbounded, sans-serif" }}
         >
-          RACE TRACK
+          SAKURA CIRCUIT
         </h2>
         <p className="text-[#475569] text-sm mb-6">Select your car and beat the AI!</p>
         <div className="w-full" style={{ maxWidth: 900 }}>
@@ -26,7 +26,7 @@ function App() {
         </div>
       </section>
       <footer className="text-center py-6 text-[#94A3B8] text-xs" style={{ fontFamily: "Outfit, sans-serif" }}>
-        Tokyo Circuit — Japan Racing Challenge
+        Sakura Circuit — Japan Racing Challenge
       </footer>
     </div>
   );

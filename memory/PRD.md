@@ -1,4 +1,4 @@
-# Tokyo Circuit - Japan Racing Game PRD
+# Sakura Circuit - Japan Racing Game PRD
 
 ## Problem Statement
 Build a top-down 2D racing game set in Japan during daytime, later redesigned to 3rd-person behind-the-car perspective. Classic racing circuit, Tokyo urban streets, cherry blossom trees, mountain scenery.

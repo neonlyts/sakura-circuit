@@ -87,7 +87,7 @@ export default function LandingPage({ gameRef }) {
               textShadow: "0 4px 30px rgba(0,0,0,0.3)",
             }}
           >
-            TOKYO
+            SAKURA
             <br />
             <span style={{ color: "#FFD0DC" }}>CIRCUIT</span>
           </h1>
@@ -96,7 +96,7 @@ export default function LandingPage({ gameRef }) {
             className="text-white/90 text-lg sm:text-xl font-medium mb-10 max-w-lg mx-auto"
             style={{ fontFamily: "Outfit, sans-serif" }}
           >
-            Race through the streets of Tokyo. Cherry blossoms, mountain views,
+            Race through the cherry blossom roads of Japan. Mountain views,
             and fierce AI opponents await.
           </p>
 
@@ -195,7 +195,7 @@ export default function LandingPage({ gameRef }) {
                 RACE
               </h3>
               <p className="text-[#475569] text-sm leading-relaxed">
-                Complete <strong>3 laps</strong> around the classic Tokyo Circuit.
+                Complete <strong>3 laps</strong> around the classic Sakura Circuit.
                 Go off-track and you slow down — stay on the asphalt!
               </p>
               <div className="mt-3 flex items-center gap-2 text-xs text-[#64748B]">
@@ -223,7 +223,7 @@ export default function LandingPage({ gameRef }) {
                 WIN
               </h3>
               <p className="text-[#475569] text-sm leading-relaxed">
-                Finish in <strong>1st place</strong> to claim the Tokyo Championship!
+                Finish in <strong>1st place</strong> to claim the Sakura Championship!
                 Any other position is a loss.
               </p>
               <div className="mt-3 grid grid-cols-3 gap-1 text-center">
