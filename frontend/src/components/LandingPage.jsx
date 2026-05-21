@@ -93,8 +93,8 @@ export default function LandingPage({ gameRef }) {
           </h1>
 
           <p
-            className="text-white/90 text-lg sm:text-xl font-medium mb-10 max-w-lg mx-auto"
-            style={{ fontFamily: "Outfit, sans-serif" }}
+            className="text-lg sm:text-xl font-medium mb-10 max-w-lg mx-auto"
+            style={{ fontFamily: "Outfit, sans-serif", color: "rgba(20,40,60,0.82)", textShadow: "0 1px 3px rgba(255,255,255,0.4)" }}
           >
             Race through the cherry blossom roads of Japan. Mountain views,
             and fierce AI opponents await.
