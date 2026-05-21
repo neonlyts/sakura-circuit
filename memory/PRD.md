@@ -54,7 +54,11 @@ Build a top-down 2D racing game set in Japan during daytime, later redesigned to
 
 ## Prioritized Backlog
 
-### P1 (Next)
+### P1 (Next - done)
+- [x] Engine sound (Web Audio API — sawtooth oscillators + lowpass filter, pitch 65→215 Hz with speed)
+- [x] Mobile touch controls (◀ Left, ▼ Brake, ▲ Gas, ▶ Right — touch + mouse events, touchAction:none)
+
+### P1 (Remaining)
 - Sound effects (engine revving, tire screech on kerbs)
 - Ghost car (race your own best lap)
 - Best lap time / leaderboard stored in MongoDB

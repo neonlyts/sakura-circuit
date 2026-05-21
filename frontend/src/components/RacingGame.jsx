@@ -834,6 +834,71 @@ function renderStaticTrack3D(canvas) {
 }
 
 // =====================================================================
+// ENGINE SOUND (Web Audio API)
+// Creates oscillator-based engine rumble that rises in pitch with speed.
+// Must be called on a user-interaction to satisfy browser autoplay policy.
+// =====================================================================
+function initEngineSound() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    const ctx = new AC();
+
+    // Master gain (volume follows car speed)
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+
+    // Low-pass filter — softens the raw sawtooth into a warm engine rumble
+    const lpf = ctx.createBiquadFilter();
+    lpf.type = "lowpass";
+    lpf.frequency.value = 700;
+    lpf.Q.value = 0.6;
+    lpf.connect(master);
+
+    // Oscillator 1: fundamental (main engine body)
+    const osc1 = ctx.createOscillator();
+    osc1.type = "sawtooth";
+    osc1.frequency.value = 65;
+    osc1.connect(lpf);
+    osc1.start();
+
+    // Oscillator 2: 2nd harmonic (adds character / richness)
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.32;
+    g2.connect(lpf);
+    const osc2 = ctx.createOscillator();
+    osc2.type = "sawtooth";
+    osc2.frequency.value = 130;
+    osc2.connect(g2);
+    osc2.start();
+
+    return { ctx, master, osc1, osc2 };
+  } catch (_) {
+    return null; // silently fail if audio not available
+  }
+}
+
+function updateEngineSound(audio, speed) {
+  if (!audio) return;
+  const { ctx, master, osc1, osc2 } = audio;
+  const t    = ctx.currentTime;
+  const freq = 65 + Math.abs(speed) * 30; // 65 Hz idle → ~215 Hz at max speed
+  const vol  = Math.min(0.18, Math.abs(speed) * 0.04);
+  osc1.frequency.setTargetAtTime(freq,     t, 0.06);
+  osc2.frequency.setTargetAtTime(freq * 2, t, 0.06);
+  master.gain.setTargetAtTime(vol, t, 0.10);
+}
+
+function stopEngineSound(audio) {
+  if (!audio) return;
+  try {
+    audio.master.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.4);
+    setTimeout(() => { try { audio.ctx.close(); } catch (_) {} }, 1500);
+  } catch (_) {}
+}
+
+// =====================================================================
 // TIME FORMATTER
 // =====================================================================
 function fmtTime(sec) {
@@ -858,7 +923,8 @@ export default function RacingGame() {
   const rafRef        = useRef(null);
   const lastTRef      = useRef(null);
   const startTRef     = useRef(null);
-  const steerLeanRef  = useRef(0); // visual lean on steering (3D only)
+  const steerLeanRef  = useRef(0);
+  const audioRef      = useRef(null); // Web Audio engine sound
 
   // Keyboard handlers
   useEffect(() => {
@@ -958,6 +1024,9 @@ export default function RacingGame() {
     // Render (3D perspective)
     if (canvasRef.current) render3D(canvasRef.current, gs, steerLeanRef.current);
 
+    // Engine sound update
+    updateEngineSound(audioRef.current, p.speed);
+
     // HUD
     const elapsed = startTRef.current ? (ts - startTRef.current) / 1000 : 0;
     const pos     = getRacePos(p, gs.ai1, gs.ai2);
@@ -965,6 +1034,8 @@ export default function RacingGame() {
 
     // End: player finished
     if (p.finished) {
+      stopEngineSound(audioRef.current);
+      audioRef.current = null;
       setResult(p.finPos === 1 ? "win" : "lose");
       setPhase("finished");
       return;
@@ -972,6 +1043,8 @@ export default function RacingGame() {
     // End: both AIs done before player
     if (gs.ai1.finished && gs.ai2.finished && !p.finished) {
       p.finPos = 3;
+      stopEngineSound(audioRef.current);
+      audioRef.current = null;
       setResult("lose");
       setPhase("finished");
       return;
@@ -982,6 +1055,8 @@ export default function RacingGame() {
 
   const startCountdown = useCallback(() => {
     initGameState(selectedCar);
+    // Init engine sound on user interaction (satisfies browser autoplay policy)
+    if (!audioRef.current) audioRef.current = initEngineSound();
     setPhase("countdown");
     let c = 3;
     setCdNum(c);
@@ -1006,6 +1081,8 @@ export default function RacingGame() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     lastTRef.current = null;
     steerLeanRef.current = 0;
+    stopEngineSound(audioRef.current);
+    audioRef.current = null;
     setResult(null);
     setHud({ spd: 0, lap: 1, time: 0, pos: 1 });
     setPhase("car-select");
@@ -1023,7 +1100,12 @@ export default function RacingGame() {
         style={{ width: CW, height: CH, flexShrink: 0 }}
         data-testid="game-container"
       >
-        <canvas ref={canvasRef} width={CW} height={CH} style={{ display: "block" }} />
+        <canvas
+          ref={canvasRef}
+          width={CW}
+          height={CH}
+          style={{ display: "block", touchAction: "none" }}
+        />
 
         {/* ── CAR SELECTION OVERLAY ── */}
         {phase === "car-select" && (
@@ -1179,13 +1261,85 @@ export default function RacingGame() {
           </div>
         )}
 
-        {/* Controls reminder */}
+        {/* ── TOUCH CONTROLS (phone + tablet, works with mouse on desktop) ── */}
         {phase === "racing" && (
           <div
-            className="absolute bottom-3 right-3 pointer-events-none text-xs text-white/38"
+            className="absolute bottom-0 left-0 right-0 flex justify-between items-end px-3 pb-3"
+            style={{ pointerEvents: "none", touchAction: "none", userSelect: "none" }}
+          >
+            {/* Left cluster: Steer Left | Brake */}
+            <div className="flex gap-2.5" style={{ pointerEvents: "auto" }}>
+              {[
+                { code: "ArrowLeft",  label: "◀", hint: "Left",  big: false, color: "rgba(77,168,218,0.55)",  border: "rgba(77,168,218,0.8)"  },
+                { code: "ArrowDown",  label: "▼", hint: "Brake", big: false, color: "rgba(0,0,0,0.45)",       border: "rgba(255,255,255,0.22)" },
+              ].map(({ code, label, hint, color, border }) => (
+                <button
+                  key={code}
+                  data-testid={`touch-${hint.toLowerCase()}`}
+                  onTouchStart={(e) => { e.preventDefault(); keysRef.current.add(code); }}
+                  onTouchEnd={(e)   => { e.preventDefault(); keysRef.current.delete(code); }}
+                  onTouchCancel={(e)=> { e.preventDefault(); keysRef.current.delete(code); }}
+                  onMouseDown={() => keysRef.current.add(code)}
+                  onMouseUp={()    => keysRef.current.delete(code)}
+                  onMouseLeave={()  => keysRef.current.delete(code)}
+                  style={{
+                    width: 66, height: 66, borderRadius: 16,
+                    background: color, border: `1.5px solid ${border}`,
+                    backdropFilter: "blur(8px)", display: "flex",
+                    flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    color: "#FFF", fontSize: 22, fontWeight: 700,
+                    cursor: "pointer", touchAction: "none",
+                    WebkitUserSelect: "none", userSelect: "none",
+                  }}
+                >
+                  <span style={{ lineHeight: 1 }}>{label}</span>
+                  <span style={{ fontSize: 9, opacity: 0.7, marginTop: 3, fontFamily: "Outfit,sans-serif", letterSpacing: "0.05em" }}>{hint}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Right cluster: Gas | Steer Right */}
+            <div className="flex gap-2.5" style={{ pointerEvents: "auto" }}>
+              {[
+                { code: "ArrowUp",    label: "▲", hint: "Gas",   big: true,  color: "rgba(117,212,129,0.60)", border: "rgba(117,212,129,0.9)" },
+                { code: "ArrowRight", label: "▶", hint: "Right", big: false, color: "rgba(77,168,218,0.55)",  border: "rgba(77,168,218,0.8)"  },
+              ].map(({ code, label, hint, big, color, border }) => (
+                <button
+                  key={code}
+                  data-testid={`touch-${hint.toLowerCase()}`}
+                  onTouchStart={(e) => { e.preventDefault(); keysRef.current.add(code); }}
+                  onTouchEnd={(e)   => { e.preventDefault(); keysRef.current.delete(code); }}
+                  onTouchCancel={(e)=> { e.preventDefault(); keysRef.current.delete(code); }}
+                  onMouseDown={() => keysRef.current.add(code)}
+                  onMouseUp={()    => keysRef.current.delete(code)}
+                  onMouseLeave={()  => keysRef.current.delete(code)}
+                  style={{
+                    width: big ? 82 : 66, height: big ? 82 : 66,
+                    borderRadius: big ? 20 : 16,
+                    background: color, border: `1.5px solid ${border}`,
+                    backdropFilter: "blur(8px)", display: "flex",
+                    flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    color: "#FFF", fontSize: big ? 26 : 22, fontWeight: 700,
+                    cursor: "pointer", touchAction: "none",
+                    WebkitUserSelect: "none", userSelect: "none",
+                    boxShadow: big ? `0 4px 20px ${border}` : "none",
+                  }}
+                >
+                  <span style={{ lineHeight: 1 }}>{label}</span>
+                  <span style={{ fontSize: 9, opacity: 0.7, marginTop: 3, fontFamily: "Outfit,sans-serif", letterSpacing: "0.05em" }}>{hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Controls hint (keyboard, top-right corner) */}
+        {phase === "racing" && (
+          <div
+            className="absolute top-14 right-3 pointer-events-none text-xs text-white/30"
             style={{ fontFamily: "Outfit, sans-serif" }}
           >
-            WASD / Arrow Keys
+            WASD / Arrows
           </div>
         )}
 
