@@ -44,13 +44,13 @@ Build a top-down 2D racing game set in Japan during daytime, later redesigned to
 - Steer lean: visual body tilt when pressing A/D or ←/→
 - All game logic (physics, AI, laps) unchanged from v1
 
-## Testing Results (v2)
-- Frontend: 92% automated pass rate
-- 3D perspective road verified working
-- Speed 0→234 km/h on W key
-- AI cars visible on road ahead
-- All data-testid elements present
-- No console errors
+## Bug Fixes (Feb 2026)
+- **P1→P2 finish bug**: AI2 started at `(158,475)` which maps to smooth[296] (past the halfway mark at 127). `trackProgress` fired `halfway=true` on frame-1, giving AI2 a free lap — it only needed 2 real laps while the player needed 3. Fixed by moving AI2 to `(200,474)` → correctly maps to smooth[2]. Verified with Node simulation.
+- **Car model redesign**: Replaced single-trapezoid body with structured lower/upper/roof sections, added horizontal taillight bar (full-width modern sports car style), round wheels with 5-spoke rims + wheel arches. Applied to both player and AI cars.
+
+## Testing Results (v2.1)
+- Bug fix verified via `node -e` simulation: old AI2 → smooth[296] (bad), new AI2 → smooth[2] (correct)
+- Car model verified via screenshot: beltline, wheel arches, rim spokes, taillight bar all visible
 
 ## Prioritized Backlog
 
