@@ -4,7 +4,7 @@ A browser-based 3rd person racing game built as a tribute to the
 launch of Forza Horizon 6 (May 2026).
 
 ## 🎮 Play Now
-👉 [Play Sakura Circuit]([sakura-circuit.vercel.app](https://sakura-circuit.vercel.app/))
+👉 [Play Sakura Circuit](https://sakura-circuit.vercel.app/)
 
 ## 🏎️ Features
 - 3rd person behind-the-car camera
