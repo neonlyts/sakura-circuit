@@ -240,6 +240,68 @@ function proj(wx, wy, camX, camY, cos_a, sin_a) {
 }
 
 // =====================================================================
+// 3D RENDERING – MOUNT FUJI (drawn in sky backdrop, before rolling hills)
+// Stratocone shape with irregular snow cap and atmospheric haze
+// =====================================================================
+function drawFuji3D(ctx, ox) {
+  const cx    = ox + 430;          // horizontal centre within panorama tile
+  const baseY = HORIZON_Y + 1;     // base at horizon
+  const H     = 165;               // total height (px) – towers above rolling hills
+  const BHW   = 178;               // half-width at base
+  const peakY = baseY - H;         // peak y ≈ HORIZON_Y - 165
+  const snowY = peakY + H * 0.38;  // snow-line y (38% down from peak)
+
+  // ─── Main volcanic body ───
+  // Quadratic-bezier slopes give the gentle, natural Fuji concavity
+  ctx.fillStyle = "#72788C"; // dark blue-grey (atmospheric distance)
+  ctx.beginPath();
+  ctx.moveTo(cx - BHW, baseY);
+  ctx.quadraticCurveTo(cx - BHW * 0.52, baseY - H * 0.57, cx - 14, peakY + 4);
+  ctx.quadraticCurveTo(cx, peakY,                          cx + 14, peakY + 4);
+  ctx.quadraticCurveTo(cx + BHW * 0.52, baseY - H * 0.57, cx + BHW, baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  // ─── Atmospheric haze (base fades toward sky colour, gives depth) ───
+  const haze = ctx.createLinearGradient(cx, baseY, cx, peakY);
+  haze.addColorStop(0,   "rgba(162,216,238,0.28)");
+  haze.addColorStop(0.5, "rgba(162,216,238,0.08)");
+  haze.addColorStop(1,   "rgba(162,216,238,0)");
+  ctx.fillStyle = haze;
+  ctx.beginPath();
+  ctx.moveTo(cx - BHW, baseY);
+  ctx.quadraticCurveTo(cx - BHW * 0.52, baseY - H * 0.57, cx - 14, peakY + 4);
+  ctx.quadraticCurveTo(cx, peakY,                          cx + 14, peakY + 4);
+  ctx.quadraticCurveTo(cx + BHW * 0.52, baseY - H * 0.57, cx + BHW, baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  // ─── Snow cap (near-white, slight blue tint) ───
+  // Irregular bottom edge → characteristic Fuji silhouette
+  ctx.fillStyle = "#EDECF5";
+  ctx.beginPath();
+  ctx.moveTo(cx - 14, peakY + 4);
+  ctx.quadraticCurveTo(cx, peakY,                  cx + 14, peakY + 4);
+  // Right snow edge – lumpy, natural
+  ctx.lineTo(cx + BHW * 0.30, snowY - 3);
+  ctx.quadraticCurveTo(cx + BHW * 0.20, snowY + 11, cx + BHW * 0.08, snowY + 4);
+  ctx.quadraticCurveTo(cx - BHW * 0.03, snowY + 17, cx - BHW * 0.13, snowY + 6);
+  ctx.quadraticCurveTo(cx - BHW * 0.23, snowY + 12, cx - BHW * 0.33, snowY - 2);
+  ctx.lineTo(cx - 14, peakY + 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // ─── Snow left-side shadow (gives 3-D depth to the peak) ───
+  ctx.fillStyle = "rgba(172,178,218,0.32)";
+  ctx.beginPath();
+  ctx.moveTo(cx - 14, peakY + 4);
+  ctx.quadraticCurveTo(cx - BHW * 0.11, snowY + 10, cx - BHW * 0.33, snowY - 2);
+  ctx.lineTo(cx - 14, peakY + 4);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// =====================================================================
 // 3D RENDERING – SKY + MOUNTAINS (parallax by camera angle)
 // =====================================================================
 function drawSky3D(ctx, camAngle) {
@@ -270,7 +332,12 @@ function drawSky3D(ctx, camAngle) {
   const mOff = ((-camAngle / (Math.PI * 2)) * CW * 1.3 + CW * 4) % CW;
   [-CW, 0, CW].forEach(tile => {
     const ox = mOff + tile;
-    // Far (blue-grey)
+
+    // Mount Fuji – drawn FIRST so rolling hills overlap its base,
+    // leaving the iconic snow-capped peak visible above everything
+    drawFuji3D(ctx, ox);
+
+    // Rolling hills (blue-grey, in front of Fuji)
     const mtns = [
       [ox+0,   HORIZON_Y, ox+125, HORIZON_Y-68, ox+255, HORIZON_Y],
       [ox+295, HORIZON_Y, ox+480, HORIZON_Y-108,ox+665, HORIZON_Y],
